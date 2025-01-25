@@ -1,7 +1,9 @@
-import math
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+
+from transformers.common import MLP
+from transformers.multi_head_attention import MultiHeadAttention
+
 
 class TransformerEncoderLayer(nn.Module):
     def __init__(
@@ -22,12 +24,7 @@ class TransformerEncoderLayer(nn.Module):
             d_model, n_heads, dropout, bias=bias, **kwargs
         )
         self.norm1 = norm_fn(d_model)
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward, bias=bias),
-            activation_fn(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model, bias=bias),
-        )
+        self.mlp = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
         self.dropout = nn.Dropout(dropout)
         self.norm2 = norm_fn(d_model)
         self.pre_norm = pre_norm
@@ -69,22 +66,12 @@ class TransformerDecoderLayer(nn.Module):
             d_model, n_heads, dropout, bias=bias, **kwargs
         )
         self.norm3 = norm_fn(d_model)
-        self.mlp2 = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward, bias=bias),
-            activation_fn(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model, bias=bias),
-        )
+        self.mlp2 = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
         self.norm4 = norm_fn(d_model)
 
         self.attention = MultiHeadAttention(d_model, n_heads, dropout, bias=bias)
         self.norm1 = norm_fn(d_model)
-        self.mlp1 = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward, bias=bias),
-            activation_fn(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model, bias=bias),
-        )
+        self.mlp1 = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
         self.norm2 = norm_fn(d_model)
 
         self.dropout = nn.Dropout(dropout)
