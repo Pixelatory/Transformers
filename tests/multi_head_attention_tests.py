@@ -2,9 +2,22 @@ import unittest
 from unittest.mock import patch
 
 import torch
+import torch.nn as nn
 
 from transformers.common import fill_mask_values, generate_causal_mask
 from transformers.multi_head_attention import MultiHeadAttention
+
+try:
+    from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
+    _flash_attn_found = True
+except ImportError:
+    _flash_attn_found = False
+
+try:
+    from flash_attn.ops.fused_dense import FusedDense
+    _fused_dense_found = True
+except ImportError:
+    _fused_dense_found = False
 
 BATCH_SIZE = 3
 SEQ_LEN = 10
@@ -13,14 +26,6 @@ NHEADS = 4
 K_DIM = 16
 V_DIM = 16
 
-try:
-    from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
-
-    _flash_attn_found = True
-except ImportError:
-    _flash_attn_found = False
-
-
 class TestMultiHeadAttentionBase(unittest.TestCase):
     def create_mha(
         self,
@@ -28,6 +33,7 @@ class TestMultiHeadAttentionBase(unittest.TestCase):
         value_dim: int | None = None,
         use_causal_mask: bool = False,
         use_flash_attn: bool = False,
+        use_fused_linear: bool = False,
     ):
         return MultiHeadAttention(
             D_MODEL,
@@ -39,6 +45,7 @@ class TestMultiHeadAttentionBase(unittest.TestCase):
             scale=None,
             use_causal_mask=use_causal_mask,
             use_flash_attn=use_flash_attn,
+            use_fused_linear=use_fused_linear,
         ).eval()
 
     def setUp(self):
@@ -310,3 +317,24 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assertEqual(result_2.shape, (BATCH_SIZE, SEQ_LEN, D_MODEL))
         self.assertTrue(torch.equal(result_2, result_3))
         self.assertFalse(torch.equal(result_1, result_2))
+
+    def test_fused_linear(self):
+        self.assert_cuda_is_available()
+        self.assertTrue(_fused_dense_found)
+        mha = self.create_mha(use_fused_linear=True).to(
+            device="cuda", dtype=torch.float16
+        )
+
+        has_standard_linear = False
+        has_fused_linear = False
+        for module in mha.modules():
+            if isinstance(module, FusedDense):
+                has_fused_linear = True
+            elif isinstance(module, nn.Linear):
+                has_standard_linear = True
+        self.assertTrue(has_fused_linear)
+        self.assertFalse(has_standard_linear)
+
+        input = self.input.to(device="cuda", dtype=torch.float16)
+        result = mha(input, input, input)
+        self.assertEqual(result.shape, (BATCH_SIZE, SEQ_LEN, D_MODEL))

@@ -9,7 +9,32 @@ except ImportError:
     _flash_attn_found = False
 
 
+class Linear(nn.Module):
+    """A standard PyTorch Linear, or FlashAttention's FusedDense."""
+
+    def __init__(
+        self, in_features: int, out_features: int, bias: bool, fused: bool = False
+    ):
+        super().__init__()
+        if fused and not _flash_attn_found:
+            raise ValueError(
+                "fused is True, but Flash Attention is not installed. "
+                "View https://github.com/Dao-AILab/flash-attention for installation procedure."
+            )
+        linear_module = FusedDense if fused and _flash_attn_found else nn.Linear
+        self.module = linear_module(
+            in_features=in_features,
+            out_features=out_features,
+            bias=bias,
+        )
+
+    def forward(self, x):
+        return self.module(x)
+
+
 class MLP(nn.Module):
+    """Multilayer Perceptron."""
+
     def __init__(
         self,
         in_dim: int,
@@ -21,17 +46,11 @@ class MLP(nn.Module):
         fused: bool = False,
     ):
         super().__init__()
-        if fused and not _flash_attn_found:
-            raise ValueError(
-                "fused is True, but Flash Attention is not installed. "
-                "View https://github.com/Dao-AILab/flash-attention for installation procedure."
-            )
-        linear_module = FusedDense if fused and _flash_attn_found else nn.Linear
         self.layer = nn.Sequential(
-            linear_module(in_dim, hidden_dim, bias=bias),
+            Linear(in_dim, hidden_dim, bias=bias, fused=fused),
             activation_fn(),
             nn.Dropout(dropout),
-            linear_module(hidden_dim, out_dim, bias=bias),
+            Linear(hidden_dim, out_dim, bias=bias, fused=fused),
         )
 
     def forward(self, x):
@@ -58,3 +77,15 @@ def fill_mask_values(mask: torch.Tensor):
     and values less than or equal to 0 are set to 0.0.
     """
     return mask.masked_fill(mask > 0, float("-inf")).masked_fill(mask <= 0, float(0.0))
+
+
+def reset_model_parameters(model: nn.Module):
+    """
+    Re-initialize a model's parameters.
+
+    Calls the reset_parameters() method on each module
+    within the given `model`, if the method exists.
+    """
+    for layer in model.modules():
+        if hasattr(layer, "reset_parameters"):
+            layer.reset_parameters()

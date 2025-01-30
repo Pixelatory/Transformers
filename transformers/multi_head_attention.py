@@ -1,9 +1,10 @@
 import logging
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers.common import generate_causal_mask
+from transformers.common import Linear
 
 try:
     from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
@@ -25,6 +26,7 @@ class MultiHeadAttention(nn.Module):
         scale: float | None = None,
         use_causal_mask: bool = False,
         use_flash_attn: bool = False,
+        use_fused_linear: bool = False,
     ):
         super().__init__()
 
@@ -51,14 +53,16 @@ class MultiHeadAttention(nn.Module):
         self.use_causal_mask = use_causal_mask
 
         if self.is_qkv_packed():
-            self.W_qkv = nn.Linear(d_model * 3, d_model * 3, bias=bias)
+            self.W_qkv = Linear(
+                d_model * 3, d_model * 3, bias=bias, fused=use_fused_linear
+            )
         else:
-            self.W_q = nn.Linear(d_model, d_model, bias=bias)
-            self.W_k = nn.Linear(self.key_dim, d_model, bias=bias)
-            self.W_v = nn.Linear(value_dim, d_model, bias=bias)
+            self.W_q = Linear(d_model, d_model, bias=bias, fused=use_fused_linear)
+            self.W_k = Linear(self.key_dim, d_model, bias=bias, fused=use_fused_linear)
+            self.W_v = Linear(value_dim, d_model, bias=bias, fused=use_fused_linear)
 
         self.use_flash_attn = use_flash_attn
-        self.W_o = nn.Linear(d_model, d_model, bias=bias)
+        self.W_o = Linear(d_model, d_model, bias=bias, fused=use_fused_linear)
         self.dropout = dropout
 
     def is_qkv_packed(self) -> bool:
@@ -86,8 +90,7 @@ class MultiHeadAttention(nn.Module):
             [batch_size, n_heads, seq_len, d_model].
         :param value: Projected many-head value tensor of shape
             [batch_size, n_heads, seq_len, d_model].
-        :param mask: A mask of shape [batch_size, 1, seq_len, seq_len].
-            Mask values should already be filled out before calling.
+        :param mask: Mask values should already be filled out before calling.
         :output: Tensor of shape [batch_size, n_heads, seq_len, d_model].
         """
         attn_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
@@ -154,11 +157,19 @@ class MultiHeadAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> torch.Tensor:
-        qkv = torch.concat(
-            (query, key, value), dim=-1
-        )  # [batch_size, seq_len, d_model*3]
+        """
+        Prepares a packed qkv tensor.
 
-        qkv = self.W_qkv(qkv)  # [batch_size, seq_len, d_model*3]
+        Concatenates query, key, and value into a single
+        tensor and applies a linear projection.
+
+        :returns: A tensor of shape [batch_size, seq_len, d_model*3].
+        """
+        # [batch_size, seq_len, d_model*3].
+        qkv = torch.concat((query, key, value), dim=-1)
+
+        # [batch_size, seq_len, d_model*3]
+        qkv = self.W_qkv(qkv)
 
         return qkv
 
@@ -168,6 +179,12 @@ class MultiHeadAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Prepares separate q, k, and v tensors.
+
+        Applies a linear projection to each of query,
+        key, and value.
+        """
         query = self.W_q(query)  # [batch_size, seq_len, d_model]
         key = self.W_k(key)  # [batch_size, seq_len, d_model]
         value = self.W_v(value)  # [batch_size, seq_len, d_model]
@@ -185,7 +202,7 @@ class MultiHeadAttention(nn.Module):
         :param mask: A mask of shape [batch_size, 1, seq_len, 1] or [1, 1, seq_len, seq_len] (no flash attention)
             or [batch_size, seq_len, 1] (using flash attention). Mask values should already
             be filled out to -inf or 0 before calling. If using flash attention and only
-            causal mask, don't use the mask argument and instead set use_causal_mask to True.
+            causal mask, do not use the mask argument and instead set use_causal_mask to True.
         :param cu_seqlens: Cumulative sequence lengths. Not currently used, but will be soon.
         """
         if query is None:
@@ -217,6 +234,7 @@ class MultiHeadAttention(nn.Module):
                     attn_output, transpose=False
                 )  # [batch_size, seq_len, d_model]
             else:
+                # Each of shape [batch_size, seq_len, d_model].
                 query, key, value = self._prepare_qkv(
                     query,
                     key,
@@ -228,10 +246,12 @@ class MultiHeadAttention(nn.Module):
                     key += mask
                     value += mask
 
+                # Each has shape [batch_size, seq_len, n_heads, head_dim].
                 query, key, value = self.split_heads(
                     (query, key, value), batch_size, transpose=False
-                )  # Each has shape [batch_size, seq_len, n_heads, head_dim]
+                )
 
+                # [batch_size, seq_len, n_heads, head_dim].
                 attn_output = flash_attn_func(
                     q=query,
                     k=key,
@@ -239,17 +259,16 @@ class MultiHeadAttention(nn.Module):
                     dropout_p=self.dropout if self.training else 0.0,
                     softmax_scale=self.scale,
                     causal=self.use_causal_mask,
-                )  # [batch_size, seq_len, n_heads, head_dim]
+                )
 
-                attn_output = self.combine_heads(
-                    attn_output, transpose=False
-                )  # [batch_size, seq_len, d_model]
+                # [batch_size, seq_len, d_model].
+                attn_output = self.combine_heads(attn_output, transpose=False)
 
         elif hasattr(self, "W_qkv"):
             qkv = self._prepare_packed_qkv(query, key, value)
-            query, key, value = torch.chunk(
-                qkv, chunks=3, dim=-1
-            )  # Each has shape [batch_size, seq_len, d_model]
+
+            # Each has shape [batch_size, seq_len, d_model].
+            query, key, value = torch.chunk(qkv, chunks=3, dim=-1)
 
             query, key, value = self.split_heads((query, key, value), batch_size)
 

@@ -17,4 +17,4 @@ cd "$BASE_DIR" || exit
 export PYTHONPATH="$BASE_DIR"
 
 # Run python tests.
-python -m unittest discover -v -s tests -p "test*.py"
+python -m unittest discover -v -s tests -p "*test*.py"

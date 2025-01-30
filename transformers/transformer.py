@@ -1,7 +1,9 @@
+import copy
+
 import torch
 import torch.nn as nn
 
-from transformers.common import MLP
+from transformers.common import MLP, reset_model_parameters
 from transformers.multi_head_attention import MultiHeadAttention
 
 
@@ -16,15 +18,25 @@ class TransformerEncoderLayer(nn.Module):
         activation_fn: nn.Module = nn.ReLU,
         norm_fn: nn.Module = nn.LayerNorm,
         bias: bool = True,
-        **kwargs
-    ) -> None:
+        fused_linear: bool = False,
+        mha_args: dict | None = None,
+    ):
         super().__init__()
-
+        if mha_args is None:
+            mha_args = {}
         self.attention = MultiHeadAttention(
-            d_model, n_heads, dropout, bias=bias, **kwargs
+            d_model, n_heads, dropout, bias=bias, **mha_args
         )
         self.norm1 = norm_fn(d_model)
-        self.mlp = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
+        self.mlp = MLP(
+            d_model,
+            dim_feedforward,
+            d_model,
+            bias,
+            dropout,
+            activation_fn,
+            fused=fused_linear,
+        )
         self.dropout = nn.Dropout(dropout)
         self.norm2 = norm_fn(d_model)
         self.pre_norm = pre_norm
@@ -44,6 +56,23 @@ class TransformerEncoderLayer(nn.Module):
         x = self.norm2(x) if self.pre_norm else x
         x = residual + self.dropout(self.mlp(x))
         x = self.norm2(x) if not self.pre_norm else x
+        return x
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, encoder_layer: TransformerEncoderLayer, num_layers: int):
+        super().__init__()
+        self.encoder_layers: list[TransformerEncoderLayer] = []
+
+        for _ in range(num_layers):
+            self.encoder_layers.append(copy.deepcopy(encoder_layer))
+            reset_model_parameters(self.encoder_layers[-1])
+
+    def forward(
+        self, x: torch.Tensor, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        for encoder_layer in self.encoder_layers:
+            x = encoder_layer(x, mask)
         return x
 
 
