@@ -24,24 +24,24 @@ class MultiHeadAttention(nn.Module):
         key_dim: int | None = None,
         value_dim: int | None = None,
         scale: float | None = None,
-        use_causal_mask: bool = False,
-        use_flash_attn: bool = False,
-        use_fused_linear: bool = False,
+        causal_mask: bool = False,
+        flash_attn: bool = False,
+        fused_linear: bool = False,
     ):
         super().__init__()
 
         if (d_model // n_heads) * n_heads != d_model:
             raise ValueError("d_model must be evenly divisible by num_heads")
 
-        if use_flash_attn and not _flash_attn_found:
+        if flash_attn and not _flash_attn_found:
             raise ValueError(
-                "use_flash_attn is True, but Flash Attention is not installed. "
+                "flash_attn is True, but Flash Attention is not installed. "
                 "View https://github.com/Dao-AILab/flash-attention for installation procedure."
             )
 
-        if use_causal_mask and not use_flash_attn:
+        if causal_mask and not flash_attn:
             logging.warning(
-                "use_causal_mask set to True is only used when use_flash_attn is True."
+                "causal_mask set to True is only used when flash_attn is True."
             )
 
         self.value_dim = value_dim if value_dim is not None else d_model
@@ -50,19 +50,17 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_model // n_heads
         self.d_model = d_model
         self.scale = scale if scale is not None else self.head_dim**0.5
-        self.use_causal_mask = use_causal_mask
+        self.causal_mask = causal_mask
 
         if self.is_qkv_packed():
-            self.W_qkv = Linear(
-                d_model * 3, d_model * 3, bias=bias, fused=use_fused_linear
-            )
+            self.W_qkv = Linear(d_model * 3, d_model * 3, bias=bias, fused=fused_linear)
         else:
-            self.W_q = Linear(d_model, d_model, bias=bias, fused=use_fused_linear)
-            self.W_k = Linear(self.key_dim, d_model, bias=bias, fused=use_fused_linear)
-            self.W_v = Linear(value_dim, d_model, bias=bias, fused=use_fused_linear)
+            self.W_q = Linear(d_model, d_model, bias=bias, fused=fused_linear)
+            self.W_k = Linear(self.key_dim, d_model, bias=bias, fused=fused_linear)
+            self.W_v = Linear(value_dim, d_model, bias=bias, fused=fused_linear)
 
-        self.use_flash_attn = use_flash_attn
-        self.W_o = Linear(d_model, d_model, bias=bias, fused=use_fused_linear)
+        self.use_flash_attn = flash_attn
+        self.W_o = Linear(d_model, d_model, bias=bias, fused=fused_linear)
         self.dropout = dropout
 
     def is_qkv_packed(self) -> bool:
@@ -202,7 +200,7 @@ class MultiHeadAttention(nn.Module):
         :param mask: A mask of shape [batch_size, 1, seq_len, 1] or [1, 1, seq_len, seq_len] (no flash attention)
             or [batch_size, seq_len, 1] (using flash attention). Mask values should already
             be filled out to -inf or 0 before calling. If using flash attention and only
-            causal mask, do not use the mask argument and instead set use_causal_mask to True.
+            causal mask, do not use the mask argument and instead set causal_mask to True.
         :param cu_seqlens: Cumulative sequence lengths. Not currently used, but will be soon.
         """
         if query is None:
@@ -227,7 +225,7 @@ class MultiHeadAttention(nn.Module):
                     qkv,
                     dropout_p=self.dropout if self.training else 0.0,
                     softmax_scale=self.scale,
-                    causal=self.use_causal_mask,
+                    causal=self.causal_mask,
                 )  # [batch_size, seq_len, n_heads, head_dim]
 
                 attn_output = self.combine_heads(
@@ -258,7 +256,7 @@ class MultiHeadAttention(nn.Module):
                     v=value,
                     dropout_p=self.dropout if self.training else 0.0,
                     softmax_scale=self.scale,
-                    causal=self.use_causal_mask,
+                    causal=self.causal_mask,
                 )
 
                 # [batch_size, seq_len, d_model].

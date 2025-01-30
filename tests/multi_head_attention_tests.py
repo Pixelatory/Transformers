@@ -9,12 +9,14 @@ from transformers.multi_head_attention import MultiHeadAttention
 
 try:
     from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
+
     _flash_attn_found = True
 except ImportError:
     _flash_attn_found = False
 
 try:
     from flash_attn.ops.fused_dense import FusedDense
+
     _fused_dense_found = True
 except ImportError:
     _fused_dense_found = False
@@ -26,14 +28,15 @@ NHEADS = 4
 K_DIM = 16
 V_DIM = 16
 
+
 class TestMultiHeadAttentionBase(unittest.TestCase):
     def create_mha(
         self,
         key_dim: int | None = None,
         value_dim: int | None = None,
-        use_causal_mask: bool = False,
-        use_flash_attn: bool = False,
-        use_fused_linear: bool = False,
+        causal_mask: bool = False,
+        flash_attn: bool = False,
+        fused_linear: bool = False,
     ):
         return MultiHeadAttention(
             D_MODEL,
@@ -43,9 +46,9 @@ class TestMultiHeadAttentionBase(unittest.TestCase):
             key_dim=key_dim,
             value_dim=value_dim,
             scale=None,
-            use_causal_mask=use_causal_mask,
-            use_flash_attn=use_flash_attn,
-            use_fused_linear=use_fused_linear,
+            causal_mask=causal_mask,
+            flash_attn=flash_attn,
+            fused_linear=fused_linear,
         ).eval()
 
     def setUp(self):
@@ -148,9 +151,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assert_cuda_is_available()
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_qkvpacked_func
-        mha = self.create_mha(use_flash_attn=True).to(
-            device="cuda", dtype=torch.float16
-        )
+        mha = self.create_mha(flash_attn=True).to(device="cuda", dtype=torch.float16)
         input = self.input.to(device="cuda", dtype=torch.float16)
         result = mha(input, input, input)
         self.assertEqual(result.shape, (BATCH_SIZE, SEQ_LEN, D_MODEL))
@@ -162,7 +163,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assert_cuda_is_available()
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_qkvpacked_func
-        mha = self.create_mha(use_flash_attn=True, use_causal_mask=True).to(
+        mha = self.create_mha(flash_attn=True, causal_mask=True).to(
             device="cuda", dtype=torch.float16
         )
         input = self.input.to(device="cuda", dtype=torch.float16)
@@ -176,7 +177,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assert_cuda_is_available()
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_func
-        mha = self.create_mha(use_flash_attn=True, key_dim=K_DIM, value_dim=V_DIM).to(
+        mha = self.create_mha(flash_attn=True, key_dim=K_DIM, value_dim=V_DIM).to(
             device="cuda", dtype=torch.float16
         )
         query = self.input.to(device="cuda", dtype=torch.float16)
@@ -193,7 +194,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_func
         mha = self.create_mha(
-            use_flash_attn=True, key_dim=K_DIM, value_dim=V_DIM, use_causal_mask=True
+            flash_attn=True, key_dim=K_DIM, value_dim=V_DIM, causal_mask=True
         ).to(device="cuda", dtype=torch.float16)
         query = self.input.to(device="cuda", dtype=torch.float16)
         key = self.key_input.to(device="cuda", dtype=torch.float16)
@@ -210,9 +211,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_qkvpacked_func
 
-        mha = self.create_mha(use_flash_attn=True).to(
-            device="cuda", dtype=torch.float16
-        )
+        mha = self.create_mha(flash_attn=True).to(device="cuda", dtype=torch.float16)
         input = self.input.to(device="cuda", dtype=torch.float16)
         mask = (
             torch.randint(low=0, high=2, size=(BATCH_SIZE, SEQ_LEN))
@@ -243,7 +242,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assertTrue(_flash_attn_found)
         attn_func_mock.side_effect = flash_attn_func
 
-        mha = self.create_mha(use_flash_attn=True, value_dim=V_DIM, key_dim=K_DIM).to(
+        mha = self.create_mha(flash_attn=True, value_dim=V_DIM, key_dim=K_DIM).to(
             device="cuda", dtype=torch.float16
         )
         query = self.input.to(device="cuda", dtype=torch.float16)
@@ -274,9 +273,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         self.assert_cuda_is_available()
         self.assertTrue(_flash_attn_found)
 
-        mha = self.create_mha(use_flash_attn=True).to(
-            device="cuda", dtype=torch.float16
-        )
+        mha = self.create_mha(flash_attn=True).to(device="cuda", dtype=torch.float16)
         input = self.input.to(device="cuda", dtype=torch.float16)
         mask = (
             torch.randint(low=0, high=2, size=(BATCH_SIZE, SEQ_LEN))
@@ -297,7 +294,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
         """Masking before flash attention does not raise errors with expected input."""
         self.assert_cuda_is_available()
         self.assertTrue(_flash_attn_found)
-        mha = self.create_mha(use_flash_attn=True, value_dim=V_DIM, key_dim=K_DIM).to(
+        mha = self.create_mha(flash_attn=True, value_dim=V_DIM, key_dim=K_DIM).to(
             device="cuda", dtype=torch.float16
         )
         query = self.input.to(device="cuda", dtype=torch.float16)
@@ -321,9 +318,7 @@ class TestMultiHeadAttentionFlashAttention(TestMultiHeadAttentionBase):
     def test_fused_linear(self):
         self.assert_cuda_is_available()
         self.assertTrue(_fused_dense_found)
-        mha = self.create_mha(use_fused_linear=True).to(
-            device="cuda", dtype=torch.float16
-        )
+        mha = self.create_mha(fused_linear=True).to(device="cuda", dtype=torch.float16)
 
         has_standard_linear = False
         has_fused_linear = False

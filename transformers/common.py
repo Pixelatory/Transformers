@@ -8,6 +8,13 @@ try:
 except ImportError:
     _flash_attn_found = False
 
+try:
+    from flash_attn.ops.fused_dense import FusedDense
+
+    _fused_dense_found = True
+except ImportError:
+    _fused_dense_found = False
+
 
 class Linear(nn.Module):
     """A standard PyTorch Linear, or FlashAttention's FusedDense."""
@@ -16,10 +23,10 @@ class Linear(nn.Module):
         self, in_features: int, out_features: int, bias: bool, fused: bool = False
     ):
         super().__init__()
-        if fused and not _flash_attn_found:
+        if fused and not _fused_dense_found:
             raise ValueError(
-                "fused is True, but Flash Attention is not installed. "
-                "View https://github.com/Dao-AILab/flash-attention for installation procedure."
+                "fused is True, but FusedDense is not installed. "
+                "View https://github.com/Dao-AILab/flash-attention/tree/main/csrc/fused_dense_lib for installation procedure."
             )
         linear_module = FusedDense if fused and _flash_attn_found else nn.Linear
         self.module = linear_module(

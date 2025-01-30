@@ -25,7 +25,7 @@ class TransformerEncoderLayer(nn.Module):
         if mha_args is None:
             mha_args = {}
         self.attention = MultiHeadAttention(
-            d_model, n_heads, dropout, bias=bias, **mha_args
+            d_model, n_heads, dropout, bias=bias, fused_linear=fused_linear, **mha_args
         )
         self.norm1 = norm_fn(d_model)
         self.mlp = MLP(
@@ -62,7 +62,7 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerEncoder(nn.Module):
     def __init__(self, encoder_layer: TransformerEncoderLayer, num_layers: int):
         super().__init__()
-        self.encoder_layers: list[TransformerEncoderLayer] = []
+        self.encoder_layers = nn.ModuleList()
 
         for _ in range(num_layers):
             self.encoder_layers.append(copy.deepcopy(encoder_layer))
