@@ -49,7 +49,7 @@ class TransformerEncoderLayer(nn.Module):
         """
         residual = x
         x = self.norm1(x) if self.pre_norm else x
-        x = residual + self.dropout(self.attention(x, x, x, mask))
+        x = residual + self.attention(x, x, x, mask)
         x = self.norm1(x) if not self.pre_norm else x
 
         residual = x
@@ -87,29 +87,47 @@ class TransformerDecoderLayer(nn.Module):
         activation_fn: nn.Module = nn.ReLU,
         norm_fn: nn.Module = nn.LayerNorm,
         bias: bool = True,
-        **kwargs
+        fused_linear: bool = True,
+        mha_args: dict | None = None,
     ) -> None:
         super().__init__()
+        if mha_args is None:
+            mha_args = {}
 
         self.cross_attention = MultiHeadAttention(
-            d_model, n_heads, dropout, bias=bias, **kwargs
+            d_model, n_heads, dropout, bias=bias, fused_linear=fused_linear, **mha_args
+        )
+        self.norm1 = norm_fn(d_model)
+
+        self.attention = MultiHeadAttention(
+            d_model,
+            n_heads,
+            dropout,
+            causal_mask=True,
+            bias=bias,
+            fused_linear=fused_linear,
+            **mha_args
+        )
+        self.norm2 = norm_fn(d_model)
+
+        self.mlp = MLP(
+            d_model,
+            dim_feedforward,
+            d_model,
+            bias,
+            dropout,
+            activation_fn,
+            fused=fused_linear,
         )
         self.norm3 = norm_fn(d_model)
-        self.mlp2 = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
-        self.norm4 = norm_fn(d_model)
-
-        self.attention = MultiHeadAttention(d_model, n_heads, dropout, bias=bias)
-        self.norm1 = norm_fn(d_model)
-        self.mlp1 = MLP(d_model, dim_feedforward, d_model, bias, dropout, activation_fn)
-        self.norm2 = norm_fn(d_model)
 
         self.dropout = nn.Dropout(dropout)
         self.pre_norm = pre_norm
 
     def forward(
         self,
-        encoder_out: torch.Tensor,
-        tgt: torch.Tensor,
+        source: torch.Tensor,
+        target: torch.Tensor,
         self_attn_mask: torch.Tensor = None,
         cross_attn_mask: torch.Tensor = None,
     ):
@@ -122,30 +140,44 @@ class TransformerDecoderLayer(nn.Module):
             Should be shape (query_len x key_len/value_len), (batch_size x n_heads x query_len x key_len/value_len), \
             or (batch_size x key_len/value_len)
         """
-        # self-attention followed by feedforward on tgt tensor
-        residual = tgt
-        tgt = self.norm1(tgt) if self.pre_norm else tgt
-        tgt = residual + self.dropout(
-            self.attention(tgt, tgt, tgt, mask=self_attn_mask)
+        # Self-attention followed by feedforward on target tensor.
+        residual = target
+        target = self.norm1(target) if self.pre_norm else target
+        target = residual + self.attention(target, target, target, mask=self_attn_mask)
+        target = self.norm1(target) if not self.pre_norm else target
+
+        # Cross-attention followed by feedforward with source and target tensors.
+        residual = target
+        target = self.norm2(target) if self.pre_norm else target
+        target = residual + self.cross_attention(
+            target, source, source, mask=cross_attn_mask
         )
-        tgt = self.norm1(tgt) if not self.pre_norm else tgt
+        target = self.norm2(target) if not self.pre_norm else target
 
-        residual = tgt
-        tgt = self.norm2(tgt) if self.pre_norm else tgt
-        tgt = residual + self.dropout(self.mlp1(tgt))
-        tgt = self.norm2(tgt) if not self.pre_norm else tgt
+        residual = target
+        target = self.norm3(target) if self.pre_norm else target
+        target = residual + self.dropout(self.mlp(target))
+        target = self.norm3(target) if not self.pre_norm else target
 
-        # cross-attention followed by feedforward with encoder_out and tgt tensors
-        residual = tgt
-        tgt = self.norm3(tgt) if self.pre_norm else tgt
-        tgt = residual + self.dropout(
-            self.cross_attention(tgt, encoder_out, encoder_out, mask=cross_attn_mask)
-        )
-        tgt = self.norm3(tgt) if not self.pre_norm else tgt
+        return target
 
-        residual = tgt
-        tgt = self.norm4(tgt) if self.pre_norm else tgt
-        tgt = residual + self.dropout(self.mlp2(tgt))
-        tgt = self.norm4(tgt) if not self.pre_norm else tgt
 
-        return tgt
+class TransformerDecoder(nn.Module):
+    def __init__(self, decoder_layer: TransformerDecoderLayer, num_layers: int):
+        super().__init__()
+        self.decoder_layers = nn.ModuleList()
+
+        for _ in range(num_layers):
+            self.decoder_layers.append(copy.deepcopy(decoder_layer))
+            reset_model_parameters(self.decoder_layers[-1])
+
+    def forward(
+        self,
+        source: torch.Tensor,
+        target: torch.Tensor,
+        self_attn_mask: torch.Tensor = None,
+        cross_attn_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        for decoder_layer in self.decoder_layers:
+            x = decoder_layer(source, target, self_attn_mask, cross_attn_mask)
+        return x
