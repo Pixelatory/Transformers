@@ -89,7 +89,7 @@ class TransformerDecoderLayer(nn.Module):
         bias: bool = True,
         fused_linear: bool = True,
         mha_args: dict | None = None,
-    ) -> None:
+    ):
         super().__init__()
         if mha_args is None:
             mha_args = {}
