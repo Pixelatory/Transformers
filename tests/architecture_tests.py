@@ -3,13 +3,8 @@ import unittest
 import torch
 
 from tests.common_tests import DIM_FEEDFORWARD
-from tests.multi_head_attention_tests import (
-    BATCH_SIZE,
-    D_MODEL,
-    NHEADS,
-    SEQ_LEN,
-)
-from transformers.architectures import VanillaTransformer
+from tests.multi_head_attention_tests import BATCH_SIZE, D_MODEL, NHEADS, SEQ_LEN
+from transformers.architectures.vanilla_transformer import VanillaTransformer
 
 VOCAB_SIZE = 8
 

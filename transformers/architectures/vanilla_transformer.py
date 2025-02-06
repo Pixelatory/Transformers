@@ -11,6 +11,13 @@ from transformers.transformer import (
 
 
 class VanillaTransformer(nn.Module):
+    """
+    Vanilla Transformer architecture.
+
+    Vaswani et al. "Attention is all you need."
+    Advances in Neural Information Processing Systems (2017).
+    """
+
     def __init__(
         self,
         vocab_size: int,

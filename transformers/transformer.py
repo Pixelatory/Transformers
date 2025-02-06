@@ -66,7 +66,7 @@ class TransformerEncoder(nn.Module):
 
         for _ in range(num_layers):
             self.encoder_layers.append(copy.deepcopy(encoder_layer))
-            reset_model_parameters(self.encoder_layers[-1])
+        reset_model_parameters(self)
 
     def forward(
         self, x: torch.Tensor, mask: torch.Tensor | None = None
@@ -169,7 +169,7 @@ class TransformerDecoder(nn.Module):
 
         for _ in range(num_layers):
             self.decoder_layers.append(copy.deepcopy(decoder_layer))
-            reset_model_parameters(self.decoder_layers[-1])
+        reset_model_parameters(self)
 
     def forward(
         self,
