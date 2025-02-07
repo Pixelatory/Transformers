@@ -33,7 +33,6 @@ class SinusoidalEncoder(nn.Module):
         else:
             _, seq_len, d_model = x.size()
             encoding = self._generate_encoding(seq_len, d_model)
-        print(x.shape, encoding.shape)
         return x + encoding
 
 
@@ -83,26 +82,9 @@ class GaussianFourierEncoder(nn.Module):
         angles = 2 * torch.pi * (x @ self.frequencies.T)
 
         # [batch_size, num_bands * 2]
-        fourier_features = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
+        fourier_features = torch.cat((torch.sin(angles), torch.cos(angles)), dim=-1)
 
         if self.concat_original:
-            fourier_features = torch.cat([x, fourier_features], dim=-1)
+            fourier_features = torch.cat((x, fourier_features), dim=-1)
 
         return fourier_features.view(*batch_shape, -1)
-
-
-if __name__ == "__main__":
-    batch_size = 3
-    seq_len = 5
-    input_dim = 1
-    encoder = GaussianFourierEncoder(input_dim=input_dim, num_bands=4, sigma=10.0)
-    x = torch.linspace(start=-1, end=1, steps=seq_len).unsqueeze(-1)
-    print(x)
-    encoded_x = encoder(x)
-    print(encoded_x)
-    print(encoded_x.expand(size=(batch_size, -1, -1)))
-    print(encoded_x.expand(size=(batch_size, -1, -1)).shape)
-    exit(1)
-    batched_tensor = encoded_x.expand((batch_size, -1, -1))
-    print(batched_tensor.shape)
-    print(batched_tensor)

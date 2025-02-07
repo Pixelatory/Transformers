@@ -7,9 +7,6 @@ from transformers.common import MLP, reset_model_parameters
 from transformers.multi_head_attention import MultiHeadAttention
 
 
-# TODO: there's some scaling that isn't done yet:
-# We scale the weights of residual layers at initialization by a factor of 1/√N where N is the number of
-# residual layers.
 class GPT2DecoderLayer(nn.Module):
     """
     GPT-2 architecture decoder layer.
@@ -114,7 +111,7 @@ class GPT2(nn.Module):
         x: torch.Tensor,
         mask: torch.Tensor = None,
     ) -> torch.Tensor:
-        """Does not apply a learned positional embedding or token embedding."""
+        """Note: Does not apply a learned positional embedding or token embedding."""
         for decoder_layer in self.decoder_layers:
             x = decoder_layer(x, mask=mask)
         return x

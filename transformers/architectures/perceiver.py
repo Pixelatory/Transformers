@@ -9,7 +9,6 @@ from transformers.multi_head_attention import MultiHeadAttention
 from transformers.positional_encoding import GaussianFourierEncoder
 
 
-# TODO: fourier features positional encoding.
 class PerceiverLayer(nn.Module):
     """
     Perceiver architecture layer.
@@ -137,7 +136,7 @@ class Perceiver(nn.Module):
             within a perceiver layer.
         :param tie_transformer_weights: Tie transformer weights between perceiver layers.
         :param num_bands: Number of frequency bands for fourier positional encoding.
-        :param sigma: Standard deviation used during normal distribution initialization of 
+        :param sigma: Standard deviation used during normal distribution initialization of
             the frequencies for fourier encoding.
         :param low: Low value when generating an equally spaced position vector within a range.
         :param high: High value when generating an equally spaced position vector within a range.
@@ -152,12 +151,11 @@ class Perceiver(nn.Module):
         self.fourier_encoder = GaussianFourierEncoder(
             input_dim=1, num_bands=num_bands, sigma=sigma, concat_original=True
         )
-        self.embedding = nn.Embedding(
-            vocab_size, emb_dim, padding_idx=padding_idx
-        )
+        self.embedding = nn.Embedding(vocab_size, emb_dim, padding_idx=padding_idx)
 
         perceiver_layer = PerceiverLayer(
             latent_dim=latent_dim,
+            kv_dim=num_bands * 2 + 1 + emb_dim,
             cross_attn_heads=n_heads,
             latent_attn_heads=n_heads,
             dim_feedforward=dim_feedforward,
@@ -177,7 +175,7 @@ class Perceiver(nn.Module):
 
         latent_vec = torch.empty(size=(num_latent_vecs, perceiver_layer.latent_dim))
         latent_vec = torch.nn.init.trunc_normal_(
-            latent_vec, mean=0, std=0.02, a=-2, b=-2
+            latent_vec, mean=0, std=0.02, a=-2, b=2
         )
         self.latent_vec = nn.Parameter(latent_vec)
 
@@ -193,7 +191,9 @@ class Perceiver(nn.Module):
         batch_size, seq_len = kv_vec.shape
 
         # Create fourier positional encodings.
-        pos_vec = torch.linspace(self.low, self.high, seq_len, device=kv_vec.device).unsqueeze(-1)
+        pos_vec = torch.linspace(
+            self.low, self.high, seq_len, device=kv_vec.device
+        ).unsqueeze(-1)
         enc_vec = self.fourier_encoder(pos_vec).expand(size=(batch_size, -1, -1))
 
         kv_vec = self.embedding(kv_vec)
@@ -201,10 +201,8 @@ class Perceiver(nn.Module):
         # Concatenate positional encodings with token embeddings.
         kv_vec = torch.concat((kv_vec, enc_vec), dim=-1)
 
-        # TODO: the kv_dim likely does not match the perceiver layer at this moment.
-
         # Expand latent_vec to have same batch size.
         latent_vec = self.latent_vec.expand(size=(batch_size, -1, -1))
         for layer in self.layers:
             latent_vec = layer(latent_vec, kv_vec)
-        return latent_vec
+        return latent_vec.mean(dim=1)
